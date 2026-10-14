@@ -217,21 +217,10 @@ export class SpeechRecognitionService {
 
     if (!SpeechRecognition) return null;
 
-    // On mobile devices (Android Chrome, iOS Safari) and WebKit, continuous mode MUST be false.
-    // In Android Chrome, setting continuous = true causes the underlying Android SpeechRecognizer
-    // to hang, mute, or fail to fire onresult events.
-    // Setting continuous = false with automatic restart on onend ensures real-time speech-to-text
-    // with instantaneous onresult caption updates.
-    const isMobileOrSafari = typeof navigator !== 'undefined' && (
-      /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) ||
-      (/^((?!chrome|android).)*safari/i.test(navigator.userAgent)) ||
-      ((navigator as any).userAgentData?.mobile === true) ||
-      (typeof window !== 'undefined' && ('ontouchstart' in window && navigator.maxTouchPoints > 0 && !/Windows NT/i.test(navigator.userAgent)))
-    );
-
     try {
       const rec = new SpeechRecognition();
-      rec.continuous = !isMobileOrSafari;
+      // Requirement 3: Set continuous = true and interimResults = true
+      rec.continuous = true;
       rec.interimResults = true;
       rec.lang = this.currentLanguage;
       rec.maxAlternatives = 1;
@@ -362,7 +351,10 @@ export class SpeechRecognitionService {
           this.setStatus('Processing');
           this.callbacks.onResult(interimAccumulator, false, 0.75);
         } else {
-          this.diagnostics.lastInterimTranscript = '';
+          if (this.diagnostics.lastInterimTranscript) {
+            this.diagnostics.lastInterimTranscript = '';
+            this.callbacks.onResult('', false, 0);
+          }
         }
 
         this.emitDiagnostics();

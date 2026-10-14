@@ -63,10 +63,7 @@ export const SpeechToTextPanel: React.FC<SpeechToTextPanelProps> = ({
   const [copied, setCopied] = useState(false);
   const [isSpeakingTts, setIsSpeakingTts] = useState(false);
   const [showCompatibilityDetails, setShowCompatibilityDetails] = useState(false);
-  const [showDiagnostics, setShowDiagnostics] = useState(false);
-
-  // Auto-commit timer for mobile silence pauses
-  const interimCommitTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const [showDiagnostics, setShowDiagnostics] = useState(true);
 
   // Live Dev Diagnostics
   const [diagnostics, setDiagnostics] = useState<SpeechDiagnostics>(speechService.getDiagnostics());
@@ -232,9 +229,6 @@ export const SpeechToTextPanel: React.FC<SpeechToTextPanelProps> = ({
 
   useEffect(() => {
     return () => {
-      if (interimCommitTimerRef.current) {
-        clearTimeout(interimCommitTimerRef.current);
-      }
       speechService.stopListening();
       ttsService.stop();
     };
@@ -260,29 +254,20 @@ export const SpeechToTextPanel: React.FC<SpeechToTextPanelProps> = ({
       onResult: (transcript, isFinal, conf) => {
         setConfidence(conf);
         const trimmed = transcript.trim();
-        if (!trimmed) return;
 
         if (isFinal) {
+          if (!trimmed) return;
           console.log('[SpeechToTextPanel] Received confirmed final transcript:', trimmed);
-          if (interimCommitTimerRef.current) {
-            clearTimeout(interimCommitTimerRef.current);
-            interimCommitTimerRef.current = null;
-          }
           commitTextToTranscripts(trimmed, conf);
         } else {
+          // Live interim speech text: updates UI instantly as user speaks
           console.log('[SpeechToTextPanel] Received live interim transcript:', trimmed);
           setInterimCaption(trimmed);
-          setSpeechStatus('Processing');
-
-          // Silence Auto-Commit: On mobile devices that omit isFinal,
-          // automatically commit the interim speech into confirmed captions after 1.2s!
-          if (interimCommitTimerRef.current) {
-            clearTimeout(interimCommitTimerRef.current);
+          if (trimmed) {
+            setSpeechStatus('Processing');
+          } else {
+            setSpeechStatus('Listening');
           }
-          interimCommitTimerRef.current = setTimeout(() => {
-            console.log('[SpeechToTextPanel] Inactivity auto-commit of interim text:', trimmed);
-            commitTextToTranscripts(trimmed, 0.90);
-          }, 1200);
         }
       },
       onError: (err, isFatal) => {
@@ -311,11 +296,6 @@ export const SpeechToTextPanel: React.FC<SpeechToTextPanelProps> = ({
   };
 
   const handleStopListening = () => {
-    if (interimCommitTimerRef.current) {
-      clearTimeout(interimCommitTimerRef.current);
-      interimCommitTimerRef.current = null;
-    }
-
     if (interimCaption.trim()) {
       commitTextToTranscripts(interimCaption.trim(), 0.90);
     }
@@ -327,10 +307,6 @@ export const SpeechToTextPanel: React.FC<SpeechToTextPanelProps> = ({
 
   // Explicit Clear Captions button: clears confirmed items, interim, and draft buffer
   const handleClearCaptions = () => {
-    if (interimCommitTimerRef.current) {
-      clearTimeout(interimCommitTimerRef.current);
-      interimCommitTimerRef.current = null;
-    }
     ttsService.stop();
     setIsSpeakingTts(false);
     setTranscripts([]);
@@ -776,6 +752,18 @@ export const SpeechToTextPanel: React.FC<SpeechToTextPanelProps> = ({
                 <div className="mt-2.5 inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-100 text-emerald-800 text-xs font-bold animate-pulse">
                   <span className="w-2 h-2 rounded-full bg-emerald-600" />
                   <span>Voice speech detected! Transcribing words...</span>
+                </div>
+              )}
+              {diagnostics.onAudioStartFired && !diagnostics.onSoundStartFired && (
+                <div className="mt-2 inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-100/90 text-amber-900 text-[11px] font-semibold">
+                  <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-ping" />
+                  <span>Microphone connected (Awaiting sound energy — if speaking, ensure mic is unmuted in Windows)</span>
+                </div>
+              )}
+              {diagnostics.onSoundStartFired && !diagnostics.onSpeechStartFired && (
+                <div className="mt-2 inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-teal-100 text-teal-900 text-[11px] font-semibold">
+                  <span className="w-1.5 h-1.5 rounded-full bg-teal-500" />
+                  <span>Acoustic sound detected! Processing vocal speech...</span>
                 </div>
               )}
             </div>
