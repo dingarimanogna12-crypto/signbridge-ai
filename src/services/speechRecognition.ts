@@ -314,8 +314,8 @@ export class SpeechRecognitionService {
 
         let interimAccumulator = '';
 
-        // Process all results in the event
-        for (let i = 0; i < resultsCount; ++i) {
+        // Process all newly returned/updated results from event.resultIndex
+        for (let i = resIndex; i < resultsCount; ++i) {
           const res = event.results[i];
           if (!res || !res[0]) continue;
           const transcriptText = (res[0].transcript || '').trim();
@@ -325,31 +325,26 @@ export class SpeechRecognitionService {
           console.log(`[SpeechRecognition:onresult] [Result ${i}]: isFinal=${isFinal}, conf=${conf}, transcript="${transcriptText}"`);
 
           if (isFinal) {
-            // Only emit this final result if we haven't emitted it yet
-            if (i > this.lastEmittedFinalIndex) {
-              this.lastEmittedFinalIndex = i;
-              if (transcriptText) {
-                console.log(`[SpeechRecognition:onresult] >> Emitting NEW FINAL transcript: "${transcriptText}"`);
-                this.diagnostics.lastFinalTranscript = transcriptText;
-                this.diagnostics.lastConfidence = conf;
-                this.diagnostics.lastInterimTranscript = '';
-                this.callbacks.onResult(transcriptText, true, conf);
-              }
+            if (transcriptText) {
+              console.log(`[SpeechRecognition:onresult] >> Emitting CONFIRMED FINAL transcript: "${transcriptText}"`);
+              this.diagnostics.lastFinalTranscript = transcriptText;
+              this.diagnostics.lastConfidence = conf;
+              this.callbacks.onResult(transcriptText, true, conf);
             }
           } else {
-            // Accumulate interim results for all active non-final phrases
             if (transcriptText) {
               interimAccumulator += (interimAccumulator ? ' ' : '') + transcriptText;
             }
           }
         }
 
-        // Emit interim if non-empty
-        if (interimAccumulator) {
-          console.log(`[SpeechRecognition:onresult] >> Emitting LIVE INTERIM transcript: "${interimAccumulator}"`);
-          this.diagnostics.lastInterimTranscript = interimAccumulator;
+        // Emit live interim if non-empty, or clear if empty
+        const cleanInterim = interimAccumulator.trim();
+        if (cleanInterim) {
+          console.log(`[SpeechRecognition:onresult] >> Emitting LIVE INTERIM transcript: "${cleanInterim}"`);
+          this.diagnostics.lastInterimTranscript = cleanInterim;
           this.setStatus('Processing');
-          this.callbacks.onResult(interimAccumulator, false, 0.75);
+          this.callbacks.onResult(cleanInterim, false, 0.75);
         } else {
           if (this.diagnostics.lastInterimTranscript) {
             this.diagnostics.lastInterimTranscript = '';
@@ -369,11 +364,9 @@ export class SpeechRecognitionService {
         this.diagnostics.lastErrorTimestamp = new Date().toLocaleTimeString();
         this.emitDiagnostics();
 
-        // Non-fatal pauses in continuous mode:
+        // Non-fatal natural pauses in continuous mode (standard Chrome behavior):
         if (err === 'no-speech') {
-          console.log('[SpeechRecognition:onerror] No speech detected during pause — keeping listening active.');
-          this.diagnostics.noSpeechCount++;
-          this.emitDiagnostics();
+          console.log('[SpeechRecognition:onerror] Pause detected — maintaining active listening state.');
           if (this.isListeningIntent) {
             this.setStatus('Listening');
           }
@@ -414,8 +407,8 @@ export class SpeechRecognitionService {
         this.diagnostics.onEndCount++;
         this.diagnostics.lastEndTimestamp = new Date().toLocaleTimeString();
 
-        // If there was an active interim transcript when speech disconnected/paused,
-        // commit it as a confirmed final result so words spoken before the pause are never lost!
+        // If there was an active interim transcript when speech paused/disconnected,
+        // commit it as a confirmed final result so spoken words are never lost!
         if (this.diagnostics.lastInterimTranscript && this.diagnostics.lastInterimTranscript.trim()) {
           const pending = this.diagnostics.lastInterimTranscript.trim();
           console.log('[SpeechRecognition:onend] Flushing active interim to final on pause:', pending);
@@ -449,6 +442,7 @@ export class SpeechRecognitionService {
     if (this.restartTimer) {
       clearTimeout(this.restartTimer);
     }
+    // Allow 200ms debounce for Chrome audio engine to recycle cleanly
     this.restartTimer = setTimeout(() => {
       if (!this.isListeningIntent) return;
       try {

@@ -619,12 +619,22 @@ export const SpeechToTextPanel: React.FC<SpeechToTextPanelProps> = ({
             {lang.label}
           </button>
         ))}
+
+        <div className="ml-auto">
+          <button
+            onClick={runMicHardwareTest}
+            disabled={isTestingMic}
+            className="px-2.5 py-1 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 rounded-lg text-[11px] font-semibold flex items-center gap-1.5 transition cursor-pointer"
+            title="Test if your physical microphone is hearing sound and measuring decibels"
+          >
+            <Wrench className="w-3 h-3 text-amber-700" />
+            <span>{isTestingMic ? 'Testing Mic (4s)...' : micTestResult ? 'Re-Test Mic' : 'Test Mic Sound'}</span>
+          </button>
+        </div>
       </div>
 
-
-
-      {/* Microphone Hardware Alert & Diagnostic Helper when no-speech / soundless audio is detected */}
-      {(diagnostics.noSpeechCount >= 2 || isTestingMic || micTestResult) && (
+      {/* Microphone Hardware Diagnostic Result Helper */}
+      {(isTestingMic || micTestResult) && (
         <div className="p-4 bg-amber-50 border-2 border-amber-300 rounded-2xl text-amber-950 text-xs space-y-3 animate-fade-in shadow-xs">
           <div className="flex items-start justify-between gap-3">
             <div className="flex items-start gap-2.5">
@@ -633,9 +643,9 @@ export const SpeechToTextPanel: React.FC<SpeechToTextPanelProps> = ({
                 <p className="font-bold text-sm text-amber-950">
                   {isTestingMic 
                     ? 'Testing microphone hardware sound input...'
-                    : micTestResult 
-                    ? (micTestResult.hasSound ? 'Microphone Sound Verified!' : 'Microphone Hardware Detected 0% Audio (Silence)')
-                    : 'No Sound Detected by Google Chrome (Sound Start: No / no-speech)'}
+                    : micTestResult?.hasSound
+                    ? 'Microphone Sound Verified!'
+                    : 'Microphone Hardware Detected 0% Audio (Silence)'}
                 </p>
                 <p className="text-amber-800 text-xs mt-0.5 leading-relaxed">
                   {isTestingMic
@@ -754,18 +764,10 @@ export const SpeechToTextPanel: React.FC<SpeechToTextPanelProps> = ({
                   <span>Voice speech detected! Transcribing words...</span>
                 </div>
               )}
-              {diagnostics.onAudioStartFired && !diagnostics.onSoundStartFired && (
-                <div className="mt-2 inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-100/90 text-amber-900 text-[11px] font-semibold">
-                  <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-ping" />
-                  <span>Microphone connected (Awaiting sound energy — if speaking, ensure mic is unmuted in Windows)</span>
-                </div>
-              )}
-              {diagnostics.onSoundStartFired && !diagnostics.onSpeechStartFired && (
-                <div className="mt-2 inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-teal-100 text-teal-900 text-[11px] font-semibold">
-                  <span className="w-1.5 h-1.5 rounded-full bg-teal-500" />
-                  <span>Acoustic sound detected! Processing vocal speech...</span>
-                </div>
-              )}
+              <div className="mt-2 inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-teal-100/80 text-teal-800 text-[11px] font-semibold">
+                <span className="w-1.5 h-1.5 rounded-full bg-teal-600 animate-ping" />
+                <span>Microphone active — Speak into your microphone...</span>
+              </div>
             </div>
           )}
 
