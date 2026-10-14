@@ -16,11 +16,8 @@ import {
   CheckCircle2,
   Plus,
   Terminal,
-  Activity,
-  Radio,
   ChevronDown,
-  ChevronUp,
-  Sparkles
+  ChevronUp
 } from 'lucide-react';
 import { 
   speechService, 
@@ -66,13 +63,6 @@ export const SpeechToTextPanel: React.FC<SpeechToTextPanelProps> = ({
   const [showCompatibilityDetails, setShowCompatibilityDetails] = useState(false);
   const [showDiagnostics, setShowDiagnostics] = useState(false);
 
-  // Live Microphone Audio Level Meter (Web Audio API)
-  const [audioLevel, setAudioLevel] = useState(0);
-  const audioContextRef = useRef<AudioContext | null>(null);
-  const analyserRef = useRef<AnalyserNode | null>(null);
-  const mediaStreamRef = useRef<MediaStream | null>(null);
-  const animFrameRef = useRef<number | null>(null);
-
   // Auto-commit timer for mobile silence pauses
   const interimCommitTimerRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -86,63 +76,6 @@ export const SpeechToTextPanel: React.FC<SpeechToTextPanelProps> = ({
   const [draftBuffer, setDraftBuffer] = useState('');
 
   const browserSupport = getBrowserSupportInfo();
-
-  const startAudioMeter = async () => {
-    try {
-      if (typeof window === 'undefined' || !navigator.mediaDevices?.getUserMedia) return;
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      mediaStreamRef.current = stream;
-
-      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
-      if (!AudioCtx) return;
-
-      const audioCtx = new AudioCtx();
-      audioContextRef.current = audioCtx;
-      const analyser = audioCtx.createAnalyser();
-      analyser.fftSize = 256;
-      analyser.smoothingTimeConstant = 0.4;
-      analyserRef.current = analyser;
-
-      const source = audioCtx.createMediaStreamSource(stream);
-      source.connect(analyser);
-
-      const bufferLength = analyser.frequencyBinCount;
-      const dataArray = new Uint8Array(bufferLength);
-
-      const updateMeter = () => {
-        if (!analyserRef.current) return;
-        analyserRef.current.getByteFrequencyData(dataArray);
-        let sum = 0;
-        for (let i = 0; i < bufferLength; i++) {
-          sum += dataArray[i];
-        }
-        const avg = sum / bufferLength;
-        const normalized = Math.min(100, Math.round((avg / 90) * 100));
-        setAudioLevel(normalized);
-        animFrameRef.current = requestAnimationFrame(updateMeter);
-      };
-
-      updateMeter();
-    } catch (err) {
-      console.warn('Audio meter initialization optional notice:', err);
-    }
-  };
-
-  const stopAudioMeter = () => {
-    if (animFrameRef.current) {
-      cancelAnimationFrame(animFrameRef.current);
-      animFrameRef.current = null;
-    }
-    if (mediaStreamRef.current) {
-      mediaStreamRef.current.getTracks().forEach(t => t.stop());
-      mediaStreamRef.current = null;
-    }
-    if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
-      audioContextRef.current.close().catch(() => {});
-      audioContextRef.current = null;
-    }
-    setAudioLevel(0);
-  };
 
   const commitTextToTranscripts = (textToCommit: string, conf: number = 0.95) => {
     const trimmed = textToCommit.trim();
@@ -174,6 +107,7 @@ export const SpeechToTextPanel: React.FC<SpeechToTextPanelProps> = ({
 
     setInterimCaption('');
     setSpeechStatus('Listening');
+    speechService.clearLastInterimTranscript();
   };
 
   useEffect(() => {
@@ -181,7 +115,6 @@ export const SpeechToTextPanel: React.FC<SpeechToTextPanelProps> = ({
       if (interimCommitTimerRef.current) {
         clearTimeout(interimCommitTimerRef.current);
       }
-      stopAudioMeter();
       speechService.stopListening();
       ttsService.stop();
     };
@@ -190,7 +123,6 @@ export const SpeechToTextPanel: React.FC<SpeechToTextPanelProps> = ({
   const handleStartListening = async () => {
     setErrorMessage(null);
     speechService.setLanguage(selectedLanguage);
-    startAudioMeter();
 
     const started = await speechService.startListening({
       onStart: () => {
@@ -238,13 +170,11 @@ export const SpeechToTextPanel: React.FC<SpeechToTextPanelProps> = ({
         if (isFatal) {
           setIsListening(false);
           setSpeechStatus('Error');
-          stopAudioMeter();
         }
       },
       onEnd: () => {
         setIsListening(false);
         setSpeechStatus('Ready');
-        stopAudioMeter();
       }
     });
 
@@ -254,7 +184,6 @@ export const SpeechToTextPanel: React.FC<SpeechToTextPanelProps> = ({
     } else {
       setIsListening(false);
       setSpeechStatus('Error');
-      stopAudioMeter();
       if (!speechService.isSupported()) {
         setErrorMessage(browserSupport.notes);
       }
@@ -266,7 +195,6 @@ export const SpeechToTextPanel: React.FC<SpeechToTextPanelProps> = ({
       clearTimeout(interimCommitTimerRef.current);
       interimCommitTimerRef.current = null;
     }
-    stopAudioMeter();
 
     if (interimCaption.trim()) {
       commitTextToTranscripts(interimCaption.trim(), 0.90);
@@ -569,39 +497,7 @@ export const SpeechToTextPanel: React.FC<SpeechToTextPanelProps> = ({
         </div>
       </div>
 
-      {/* Live Microphone Audio Level Meter & Sound Detection */}
-      {isListening && (
-        <div className="bg-emerald-50/90 border border-emerald-300 rounded-xl p-3 flex flex-wrap items-center justify-between gap-3 animate-fade-in">
-          <div className="flex items-center gap-2.5">
-            <div className={`w-3 h-3 rounded-full shrink-0 ${audioLevel > 10 ? 'bg-emerald-500 animate-ping' : 'bg-emerald-400'}`} />
-            <span className="text-xs font-bold text-emerald-950 shrink-0">
-              Mic Sound Level:
-            </span>
-            <div className="w-28 sm:w-44 bg-emerald-200/80 h-3 rounded-full overflow-hidden flex items-center p-0.5">
-              <div 
-                className="h-full bg-emerald-600 rounded-full transition-all duration-75"
-                style={{ width: `${Math.max(6, audioLevel)}%` }}
-              />
-            </div>
-            <span className="text-[11px] font-mono font-bold text-emerald-800 shrink-0">
-              {audioLevel}%
-            </span>
-          </div>
 
-          <div className="text-xs font-semibold">
-            {audioLevel > 12 ? (
-              <span className="text-emerald-800 font-bold flex items-center gap-1.5">
-                <span className="w-2 h-2 rounded-full bg-emerald-600 animate-pulse" />
-                Vocal sound detected — Speech engine active
-              </span>
-            ) : (
-              <span className="text-emerald-700 italic">
-                Microphone listening — Speak naturally now
-              </span>
-            )}
-          </div>
-        </div>
-      )}
 
       {/* One-Tap Quick Language Selection Pills */}
       <div className="flex flex-wrap items-center gap-1.5 text-xs">
@@ -629,35 +525,7 @@ export const SpeechToTextPanel: React.FC<SpeechToTextPanelProps> = ({
         ))}
       </div>
 
-      {/* Presentation Demo Presets for Judges */}
-      <div className="bg-teal-50/70 p-3 rounded-xl border border-teal-200 space-y-1.5">
-        <div className="flex items-center justify-between gap-2">
-          <span className="text-xs font-bold text-teal-950 flex items-center gap-1.5">
-            <Sparkles className="w-3.5 h-3.5 text-teal-600 shrink-0" />
-            <span>Judge Demo Presets (One-Tap Test):</span>
-          </span>
-          <span className="text-[10px] text-teal-700 hidden sm:inline font-medium">
-            Tap any phrase to instantly test captioning & text-to-speech
-          </span>
-        </div>
-        <div className="flex flex-wrap gap-1.5">
-          {[
-            'Hello, welcome to SignBridge AI!',
-            'Thank you for viewing our working prototype.',
-            'How can I help you today?',
-            'Please demonstrate Indian Sign Language.',
-            'Doctor is arriving shortly.'
-          ].map((phrase) => (
-            <button
-              key={phrase}
-              onClick={() => commitTextToTranscripts(phrase, 0.98)}
-              className="px-2.5 py-1 bg-white hover:bg-teal-600 hover:text-white border border-teal-200 text-teal-900 rounded-lg text-xs font-semibold transition shadow-xs cursor-pointer active:scale-95"
-            >
-              "{phrase}"
-            </button>
-          ))}
-        </div>
-      </div>
+
 
       {/* Main Subtitle Display Area */}
       <div 
@@ -697,10 +565,10 @@ export const SpeechToTextPanel: React.FC<SpeechToTextPanelProps> = ({
               <p className="text-xs max-w-sm mt-1 text-teal-700">
                 Speak clearly into your microphone in <strong>{selectedLanguage}</strong>. Captions will appear live below as you speak.
               </p>
-              {audioLevel > 10 && (
+              {speechStatus === 'Processing' && (
                 <div className="mt-2.5 inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-100 text-emerald-800 text-xs font-bold animate-pulse">
                   <span className="w-2 h-2 rounded-full bg-emerald-600" />
-                  <span>Acoustic sound detected! Transcribing speech...</span>
+                  <span>Voice speech detected! Transcribing words...</span>
                 </div>
               )}
             </div>

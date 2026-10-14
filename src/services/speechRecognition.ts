@@ -337,6 +337,7 @@ export class SpeechRecognitionService {
                 console.log(`[SpeechRecognition:onresult] >> Emitting NEW FINAL transcript: "${transcriptText}"`);
                 this.diagnostics.lastFinalTranscript = transcriptText;
                 this.diagnostics.lastConfidence = conf;
+                this.diagnostics.lastInterimTranscript = '';
                 this.callbacks.onResult(transcriptText, true, conf);
               }
             }
@@ -354,6 +355,8 @@ export class SpeechRecognitionService {
           this.diagnostics.lastInterimTranscript = interimAccumulator;
           this.setStatus('Processing');
           this.callbacks.onResult(interimAccumulator, false, 0.75);
+        } else {
+          this.diagnostics.lastInterimTranscript = '';
         }
 
         this.emitDiagnostics();
@@ -458,10 +461,13 @@ export class SpeechRecognitionService {
       } catch (err: any) {
         if (err.name !== 'InvalidStateError') {
           console.warn('[SpeechRecognition] Could not auto-restart recognition:', err);
+          this.isListeningIntent = false;
           if (err.name === 'NotAllowedError') {
-            this.isListeningIntent = false;
             this.setStatus('Error', 'Microphone permission was denied.');
             this.callbacks?.onError('Microphone permission was denied.', true);
+          } else {
+            this.setStatus('Ready');
+            this.callbacks?.onEnd();
           }
         }
       }
@@ -559,6 +565,10 @@ export class SpeechRecognitionService {
 
   public getIsListening(): boolean {
     return this.isListeningIntent;
+  }
+
+  public clearLastInterimTranscript() {
+    this.diagnostics.lastInterimTranscript = '';
   }
 }
 
