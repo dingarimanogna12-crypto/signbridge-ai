@@ -215,9 +215,18 @@ export class SpeechRecognitionService {
 
     if (!SpeechRecognition) return null;
 
+    // Detect iOS / WebKit
+    const isSafariOrIOS = typeof navigator !== 'undefined' && (
+      /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+      (/^((?!chrome|android).)*safari/i.test(navigator.userAgent)) ||
+      ((navigator as any).userAgentData?.platform === 'iOS')
+    );
+
     try {
       const rec = new SpeechRecognition();
-      rec.continuous = true;
+      // On iOS Safari / WebKit, continuous mode must be false because WebKit does not support
+      // continuous listening and silently fails or drops audio when continuous is true.
+      rec.continuous = !isSafariOrIOS;
       rec.interimResults = true;
       rec.lang = this.currentLanguage;
       rec.maxAlternatives = 1;
@@ -230,7 +239,7 @@ export class SpeechRecognitionService {
 
       // 1. onstart
       rec.onstart = () => {
-        console.log('[SpeechRecognition:onstart] Service connected and active. Lang:', rec.lang);
+        console.log('[SpeechRecognition:onstart] Service connected and active. Lang:', rec.lang, 'continuous:', rec.continuous);
         this.diagnostics.onStartFired = true;
         this.diagnostics.onStartCount++;
         this.diagnostics.lastStartTimestamp = new Date().toLocaleTimeString();
@@ -401,6 +410,17 @@ export class SpeechRecognitionService {
         console.log('[SpeechRecognition:onend] Service disconnected. isListeningIntent =', this.isListeningIntent);
         this.diagnostics.onEndCount++;
         this.diagnostics.lastEndTimestamp = new Date().toLocaleTimeString();
+
+        // If there was an active interim transcript when speech disconnected/paused,
+        // commit it as a confirmed final result so words spoken before the pause are never lost!
+        if (this.diagnostics.lastInterimTranscript && this.diagnostics.lastInterimTranscript.trim()) {
+          const pending = this.diagnostics.lastInterimTranscript.trim();
+          console.log('[SpeechRecognition:onend] Flushing active interim to final on pause:', pending);
+          this.diagnostics.lastFinalTranscript = pending;
+          this.diagnostics.lastInterimTranscript = '';
+          this.callbacks?.onResult(pending, true, 0.90);
+        }
+
         this.emitDiagnostics();
 
         // Null out this instance so next cycle creates a fresh one
@@ -438,9 +458,14 @@ export class SpeechRecognitionService {
       } catch (err: any) {
         if (err.name !== 'InvalidStateError') {
           console.warn('[SpeechRecognition] Could not auto-restart recognition:', err);
+          if (err.name === 'NotAllowedError') {
+            this.isListeningIntent = false;
+            this.setStatus('Error', 'Microphone permission was denied.');
+            this.callbacks?.onError('Microphone permission was denied.', true);
+          }
         }
       }
-    }, 250);
+    }, 150);
   }
 
   private restartRecognition() {
