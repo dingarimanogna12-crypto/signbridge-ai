@@ -17,7 +17,9 @@ import {
   Plus,
   Terminal,
   ChevronDown,
-  ChevronUp
+  ChevronUp,
+  AlertTriangle,
+  Wrench
 } from 'lucide-react';
 import { 
   speechService, 
@@ -77,6 +79,115 @@ export const SpeechToTextPanel: React.FC<SpeechToTextPanelProps> = ({
 
   // Auto-scroll ref for captions stream
   const captionsBottomRef = useRef<HTMLDivElement | null>(null);
+
+  // Hardware microphone test state
+  const [isTestingMic, setIsTestingMic] = useState(false);
+  const [micTestLiveLevel, setMicTestLiveLevel] = useState(0);
+  const [micTestResult, setMicTestResult] = useState<{
+    hasSound: boolean;
+    peakLevel: number;
+    devices: string[];
+    tested: boolean;
+  } | null>(null);
+
+  const runMicHardwareTest = async () => {
+    if (isTestingMic) return;
+    setIsTestingMic(true);
+    setMicTestLiveLevel(0);
+    setMicTestResult(null);
+
+    // Stop speech recognition during hardware audio test to prevent hardware contention
+    if (isListening) {
+      speechService.stopListening();
+      setIsListening(false);
+      setSpeechStatus('Ready');
+    }
+
+    try {
+      if (typeof window === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
+        setMicTestResult({
+          hasSound: false,
+          peakLevel: 0,
+          devices: ['getUserMedia API not supported in this browser'],
+          tested: true
+        });
+        setIsTestingMic(false);
+        return;
+      }
+
+      // 1. Enumerate all audio input devices
+      let deviceNames: string[] = [];
+      try {
+        const devList = await navigator.mediaDevices.enumerateDevices();
+        deviceNames = devList
+          .filter(d => d.kind === 'audioinput')
+          .map((d, idx) => d.label || `Microphone ${idx + 1}`);
+      } catch {
+        deviceNames = ['Default System Microphone'];
+      }
+
+      // 2. Open mic stream for test
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+      if (!AudioCtx) {
+        stream.getTracks().forEach(t => t.stop());
+        setIsTestingMic(false);
+        return;
+      }
+
+      const audioCtx = new AudioCtx();
+      const analyser = audioCtx.createAnalyser();
+      analyser.fftSize = 256;
+      analyser.smoothingTimeConstant = 0.3;
+      const source = audioCtx.createMediaStreamSource(stream);
+      source.connect(analyser);
+
+      const bufferLength = analyser.frequencyBinCount;
+      const dataArray = new Uint8Array(bufferLength);
+      let peak = 0;
+      let animId = 0;
+
+      const checkLevel = () => {
+        analyser.getByteFrequencyData(dataArray);
+        let sum = 0;
+        for (let i = 0; i < bufferLength; i++) {
+          sum += dataArray[i];
+        }
+        const avg = sum / bufferLength;
+        const normalized = Math.min(100, Math.round((avg / 80) * 100));
+        if (normalized > peak) peak = normalized;
+        setMicTestLiveLevel(normalized);
+        animId = requestAnimationFrame(checkLevel);
+      };
+
+      checkLevel();
+
+      // Run for 4 seconds
+      setTimeout(() => {
+        cancelAnimationFrame(animId);
+        stream.getTracks().forEach(t => t.stop());
+        if (audioCtx.state !== 'closed') audioCtx.close().catch(() => {});
+        setIsTestingMic(false);
+        setMicTestLiveLevel(0);
+        setMicTestResult({
+          hasSound: peak > 5,
+          peakLevel: peak,
+          devices: deviceNames,
+          tested: true
+        });
+      }, 4000);
+
+    } catch (err: any) {
+      console.warn('Microphone hardware test error:', err);
+      setIsTestingMic(false);
+      setMicTestResult({
+        hasSound: false,
+        peakLevel: 0,
+        devices: [`Access error: ${err.message || 'Permission denied'}`],
+        tested: true
+      });
+    }
+  };
 
   const browserSupport = getBrowserSupportInfo();
 
@@ -535,6 +646,93 @@ export const SpeechToTextPanel: React.FC<SpeechToTextPanelProps> = ({
       </div>
 
 
+
+      {/* Microphone Hardware Alert & Diagnostic Helper when no-speech / soundless audio is detected */}
+      {(diagnostics.noSpeechCount >= 2 || isTestingMic || micTestResult) && (
+        <div className="p-4 bg-amber-50 border-2 border-amber-300 rounded-2xl text-amber-950 text-xs space-y-3 animate-fade-in shadow-xs">
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex items-start gap-2.5">
+              <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+              <div>
+                <p className="font-bold text-sm text-amber-950">
+                  {isTestingMic 
+                    ? 'Testing microphone hardware sound input...'
+                    : micTestResult 
+                    ? (micTestResult.hasSound ? 'Microphone Sound Verified!' : 'Microphone Hardware Detected 0% Audio (Silence)')
+                    : 'No Sound Detected by Google Chrome (Sound Start: No / no-speech)'}
+                </p>
+                <p className="text-amber-800 text-xs mt-0.5 leading-relaxed">
+                  {isTestingMic
+                    ? 'Speak clearly into your microphone right now. Measuring acoustic audio energy...'
+                    : micTestResult?.hasSound
+                    ? `Microphone successfully picked up audio (peak volume: ${micTestResult.peakLevel}%). Click Start Listening to begin speech captioning!`
+                    : micTestResult && !micTestResult.hasSound
+                    ? 'Your microphone is connected, but Windows or Chrome is passing absolute silence (0% volume). Follow the checklist below to restore microphone sound.'
+                    : `Chrome connected to your microphone hardware, but received pure silence (no sound energy detected). If you spoke, please check your microphone settings below.`}
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 shrink-0">
+              {!isTestingMic && (
+                <button
+                  onClick={runMicHardwareTest}
+                  className="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded-xl font-bold text-xs flex items-center gap-1.5 transition shadow-xs cursor-pointer active:scale-95"
+                >
+                  <Wrench className="w-3.5 h-3.5" />
+                  <span>{micTestResult ? 'Re-Test Mic (4s)' : 'Test Mic Sound (4s)'}</span>
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Active test live progress meter */}
+          {isTestingMic && (
+            <div className="bg-amber-100/80 p-3 rounded-xl border border-amber-300 flex items-center gap-3">
+              <span className="text-xs font-bold text-amber-900 shrink-0">Live Mic Level:</span>
+              <div className="flex-1 bg-amber-200 h-3 rounded-full overflow-hidden p-0.5">
+                <div 
+                  className="h-full bg-amber-600 rounded-full transition-all duration-75"
+                  style={{ width: `${Math.max(4, micTestLiveLevel)}%` }}
+                />
+              </div>
+              <span className="text-xs font-mono font-bold text-amber-900 shrink-0">{micTestLiveLevel}%</span>
+            </div>
+          )}
+
+          {/* Test Result Checklist & Guidance */}
+          {(!micTestResult || !micTestResult.hasSound) && !isTestingMic && (
+            <div className="bg-white/80 p-3 rounded-xl border border-amber-200 text-[11px] space-y-2 text-amber-900">
+              <p className="font-bold text-amber-950">How to restore microphone sound in Windows & Google Chrome:</p>
+              <ol className="list-decimal list-inside space-y-1 text-amber-900 leading-relaxed">
+                <li>
+                  <strong>Hardware / Keyboard Mute:</strong> Check your laptop keyboard for a microphone key (usually <code>F4</code>, <code>Fn + F4</code>, or <code>F8</code>) with an orange/white LED light. If the LED is lit, press it to unmute.
+                </li>
+                <li>
+                  <strong>Windows Sound Volume:</strong> Open Windows <strong>Settings &gt; System &gt; Sound</strong>. Under <strong>Input</strong>, click your Microphone and verify the volume slider is set to <strong>80%–100%</strong>.
+                </li>
+                <li>
+                  <strong>Windows Privacy Settings:</strong> Open Windows <strong>Settings &gt; Privacy &amp; security &gt; Microphone</strong>. Ensure <strong>"Let desktop apps access your microphone"</strong> is turned <strong>ON</strong>.
+                </li>
+                <li>
+                  <strong>Chrome Input Device:</strong> In Chrome, click the tune/settings sliders icon on the left of the address bar (<code>https://...</code>) or paste <code>chrome://settings/content/microphone</code> into a new tab and select your physical <strong>Realtek / Internal Microphone</strong> instead of Stereo Mix or a virtual device.
+                </li>
+              </ol>
+
+              {micTestResult?.devices && micTestResult.devices.length > 0 && (
+                <div className="mt-2 pt-2 border-t border-amber-200">
+                  <span className="font-bold text-amber-950 block">Connected Audio Devices Detected by Browser:</span>
+                  <ul className="list-disc list-inside mt-0.5 space-y-0.5 text-amber-800 font-mono text-[10px]">
+                    {micTestResult.devices.map((d, i) => (
+                      <li key={i}>{d}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Main Subtitle Display Area */}
       <div 

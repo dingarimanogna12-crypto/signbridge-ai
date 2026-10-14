@@ -27,6 +27,7 @@ export interface SpeechDiagnostics {
   onNoMatchFired: boolean;
   lastError: string | null;
   lastErrorTimestamp: string | null;
+  noSpeechCount: number;
   onEndCount: number;
   lastEndTimestamp: string | null;
 }
@@ -128,6 +129,7 @@ export class SpeechRecognitionService {
     onNoMatchFired: false,
     lastError: null,
     lastErrorTimestamp: null,
+    noSpeechCount: 0,
     onEndCount: 0,
     lastEndTimestamp: null,
   };
@@ -270,6 +272,7 @@ export class SpeechRecognitionService {
       rec.onspeechstart = () => {
         console.log('[SpeechRecognition:onspeechstart] Vocal speech recognized in audio stream.');
         this.diagnostics.onSpeechStartFired = true;
+        this.diagnostics.noSpeechCount = 0;
         this.emitDiagnostics();
         if (this.isListeningIntent) {
           this.setStatus('Processing');
@@ -377,6 +380,8 @@ export class SpeechRecognitionService {
         // Non-fatal pauses in continuous mode:
         if (err === 'no-speech') {
           console.log('[SpeechRecognition:onerror] No speech detected during pause — keeping listening active.');
+          this.diagnostics.noSpeechCount++;
+          this.emitDiagnostics();
           if (this.isListeningIntent) {
             this.setStatus('Listening');
           }
