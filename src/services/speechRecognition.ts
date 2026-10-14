@@ -215,18 +215,21 @@ export class SpeechRecognitionService {
 
     if (!SpeechRecognition) return null;
 
-    // Detect iOS / WebKit
-    const isSafariOrIOS = typeof navigator !== 'undefined' && (
-      /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+    // On mobile devices (Android Chrome, iOS Safari) and WebKit, continuous mode MUST be false.
+    // In Android Chrome, setting continuous = true causes the underlying Android SpeechRecognizer
+    // to hang, mute, or fail to fire onresult events.
+    // Setting continuous = false with automatic restart on onend ensures real-time speech-to-text
+    // with instantaneous onresult caption updates.
+    const isMobileOrSafari = typeof navigator !== 'undefined' && (
+      /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) ||
       (/^((?!chrome|android).)*safari/i.test(navigator.userAgent)) ||
-      ((navigator as any).userAgentData?.platform === 'iOS')
+      ((navigator as any).userAgentData?.mobile === true) ||
+      (typeof window !== 'undefined' && ('ontouchstart' in window && navigator.maxTouchPoints > 0 && !/Windows NT/i.test(navigator.userAgent)))
     );
 
     try {
       const rec = new SpeechRecognition();
-      // On iOS Safari / WebKit, continuous mode must be false because WebKit does not support
-      // continuous listening and silently fails or drops audio when continuous is true.
-      rec.continuous = !isSafariOrIOS;
+      rec.continuous = !isMobileOrSafari;
       rec.interimResults = true;
       rec.lang = this.currentLanguage;
       rec.maxAlternatives = 1;
@@ -460,18 +463,29 @@ export class SpeechRecognitionService {
         }
       } catch (err: any) {
         if (err.name !== 'InvalidStateError') {
-          console.warn('[SpeechRecognition] Could not auto-restart recognition:', err);
-          this.isListeningIntent = false;
+          console.warn('[SpeechRecognition] Auto-restart encountered error:', err);
           if (err.name === 'NotAllowedError') {
+            this.isListeningIntent = false;
             this.setStatus('Error', 'Microphone permission was denied.');
             this.callbacks?.onError('Microphone permission was denied.', true);
           } else {
-            this.setStatus('Ready');
-            this.callbacks?.onEnd();
+            // Retry once after 200ms to allow mobile audio bus to settle
+            setTimeout(() => {
+              if (!this.isListeningIntent) return;
+              try {
+                this.recognition = this.createRecognitionInstance();
+                this.recognition?.start();
+                this.setStatus('Listening');
+              } catch {
+                this.isListeningIntent = false;
+                this.setStatus('Ready');
+                this.callbacks?.onEnd();
+              }
+            }, 200);
           }
         }
       }
-    }, 150);
+    }, 40);
   }
 
   private restartRecognition() {
